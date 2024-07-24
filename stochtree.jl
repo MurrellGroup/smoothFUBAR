@@ -170,30 +170,30 @@ Threads.@threads for i in eachindex(simulated_negative_trees)
 
     dispatch = CodonMolecularEvolution.FUBARweightedpos()
 
-    smooth_negative_result_df, smooth_negative_θ, negative_samples = CodonMolecularEvolution.smoothFUBAR(dispatch,f_grid_negative,string(i)*"_negative_smooth"; K = K, HMC_samples = iters)
-    smooth_positive_result_df, smooth_positive_θ, positive_samples = CodonMolecularEvolution.smoothFUBAR(dispatch, f_grid_positive, string(i)*"_positive_smooth"; K = K, HMC_samples = iters)
+    smooth_negative_result_df, smooth_negative_θ, positive_other_plots_tuple = CodonMolecularEvolution.smoothFUBAR(dispatch,f_grid_negative,string(i)*"_negative_smooth"; K = K, HMC_samples = iters)
+    smooth_positive_result_df, smooth_positive_θ, negative_other_plots_tuple = CodonMolecularEvolution.smoothFUBAR(dispatch, f_grid_positive, string(i)*"_positive_smooth"; K = K, HMC_samples = iters)
 
     dirichlet_negative_result_df, dirichlet_negative_θ  = CodonMolecularEvolution.FUBAR(f_grid_negative, string(i)*"_negative_dirichlet")
     dirichlet_positive_result_df, dirichlet_positive_θ = CodonMolecularEvolution.FUBAR(f_grid_positive, string(i)*"_positive_dirichlet")
     
 
 
-    scores[2*i - 1] = calculate_p(negative_samples, K)
-    scores[2*i] = calculate_p(positive_samples, K)
+    scores[2*i - 1] = negative_other_plots_tuple.global_posterior_probability
+    scores[2*i] = positive_other_plots_tuple.global_posterior_probability
     targets[2*i] = 1
-
+    println("Global BF="*string(positive_other_plots_tuple.global_bayes_factor))
     push!(result_tuples, (smooth_negative_result_df, smooth_positive_result_df, dirichlet_negative_result_df, dirichlet_positive_result_df, negative_alphavec, negative_betavec, positive_alphavec, positive_betavec))
 
-    write(string(i)*"_negative_mixiness.txt",string(calculate_mixiness(negative_samples, K)))
-    write(string(i)*"_positive_mixiness.txt",string(calculate_mixiness(positive_samples, K)))
+    write(string(i)*"_negative_mixiness.txt",string(negative_other_plots_tuple.mixing))
+    write(string(i)*"_positive_mixiness.txt",string(positive_other_plots_tuple.mixing))
 
 end
 
 
-prplot(targets, scores)
-savefig("prplot.svg")
-rocplot(targets, scores)
-savefig("rocplot.svg")
+# prplot(targets, scores)
+# savefig("prplot.svg")
+# rocplot(targets, scores)
+# savefig("rocplot.svg")
 
 positive_sites_smooth = []
 positive_sites_dirichlet = []
