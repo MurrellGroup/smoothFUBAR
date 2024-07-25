@@ -51,7 +51,6 @@ main_directory = argument_dictionary["directory"]
 
 
 
-
 function simulate_single_positive_site(nsites, σα, rate, multiplier,pos_sites)
 
     negative_alphavec::Vector{Float64} = []
@@ -119,6 +118,11 @@ Threads.@threads for i in 1:ntrees
 
 end
 
+if parse(Bool,argument_dictionary["only_simulate"])
+    exit()
+end
+
+
 function calculate_p(samples, K)
 
     ψ_samples = [samples[i].z.θ[K + 1] for i in 1:length(samples)]
@@ -170,30 +174,31 @@ Threads.@threads for i in eachindex(simulated_negative_trees)
 
     dispatch = CodonMolecularEvolution.FUBARweightedpos()
 
-    smooth_negative_result_df, smooth_negative_θ, positive_other_plots_tuple = CodonMolecularEvolution.smoothFUBAR(dispatch,f_grid_negative,string(i)*"_negative_smooth"; K = K, HMC_samples = iters)
-    smooth_positive_result_df, smooth_positive_θ, negative_other_plots_tuple = CodonMolecularEvolution.smoothFUBAR(dispatch, f_grid_positive, string(i)*"_positive_smooth"; K = K, HMC_samples = iters)
+    smooth_negative_result_df, smooth_negative_tuple = CodonMolecularEvolution.smoothFUBAR(dispatch,f_grid_negative,string(i)*"_negative_smooth"; K = K, HMC_samples = iters, plots = true)
+    smooth_positive_result_df, smooth_positive_tuple = CodonMolecularEvolution.smoothFUBAR(dispatch, f_grid_positive, string(i)*"_positive_smooth"; K = K, HMC_samples = iters, plots = true)
 
-    dirichlet_negative_result_df, dirichlet_negative_θ  = CodonMolecularEvolution.FUBAR(f_grid_negative, string(i)*"_negative_dirichlet")
-    dirichlet_positive_result_df, dirichlet_positive_θ = CodonMolecularEvolution.FUBAR(f_grid_positive, string(i)*"_positive_dirichlet")
+
+
+    dirichlet_negative_result_df, dirichlet_negative_θ  = CodonMolecularEvolution.FUBAR(f_grid_negative, string(i)*"_negative_dirichlet", plots = true)
+    dirichlet_positive_result_df, dirichlet_positive_θ = CodonMolecularEvolution.FUBAR(f_grid_positive, string(i)*"_positive_dirichlet", plots = true)
     
 
 
-    scores[2*i - 1] = negative_other_plots_tuple.global_posterior_probability
-    scores[2*i] = positive_other_plots_tuple.global_posterior_probability
+    scores[2*i - 1] = smooth_negative_tuple.global_posterior_probability
+    scores[2*i] = smooth_positive_tuple.global_posterior_probability
     targets[2*i] = 1
-    println("Global BF="*string(positive_other_plots_tuple.global_bayes_factor))
     push!(result_tuples, (smooth_negative_result_df, smooth_positive_result_df, dirichlet_negative_result_df, dirichlet_positive_result_df, negative_alphavec, negative_betavec, positive_alphavec, positive_betavec))
 
-    write(string(i)*"_negative_mixiness.txt",string(negative_other_plots_tuple.mixing))
-    write(string(i)*"_positive_mixiness.txt",string(positive_other_plots_tuple.mixing))
+    write(string(i)*"_negative_mixiness.txt",string(smooth_negative_tuple.mixing))
+    write(string(i)*"_positive_mixiness.txt",string(smooth_positive_tuple.mixing))
 
 end
 
 
-# prplot(targets, scores)
-# savefig("prplot.svg")
-# rocplot(targets, scores)
-# savefig("rocplot.svg")
+prplot(targets, scores)
+savefig("alignment_wide_prc.svg")
+rocplot(targets, scores)
+savefig("alignment_wide_roc.svg")
 
 positive_sites_smooth = []
 positive_sites_dirichlet = []
@@ -249,10 +254,10 @@ dirichlet_targets = Int64.([exp.(zeros(length(positive_sites_dirichlet))); zeros
 
 rocplot(smooth_targets, smooth_scores, label = "RFF", fillalpha = 0)
 rocplot!(dirichlet_targets, dirichlet_scores, label = "Dirichlet", fillalpha = 0)
-savefig("roc.svg")
+savefig("single_site_roc.svg")
 prplot(smooth_targets, smooth_scores, label = "RFF", fillalpha = 0)
 prplot!(dirichlet_targets, dirichlet_scores, label = "Dirichlet", fillalpha = 0)
-savefig("prc.svg")
+savefig("single_site_prc.svg")
 
 
 histogram(positive_sites_smooth, color = "red", bins = 0:0.05:1, alpha = 0.6, xlabel = "P(β > α | data)", label = "Positive class")
