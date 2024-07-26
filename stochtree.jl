@@ -1,6 +1,6 @@
-using MolecularEvolution, FASTX, Distributions, EvalMetrics, Plots, DataFrames, CSV
+using CodonMolecularEvolution, MolecularEvolution, FASTX, Distributions, EvalMetrics, Plots, DataFrames, CSV
 
-include("CodonMolecularEvolution.jl/src/CodonMolecularEvolution.jl")
+
 
 argument_dictionary = Dict(
     "directory" => ".",
@@ -98,9 +98,7 @@ function simulate_dependent_trees(nsites_small, nsites_big, σα, rate, multipli
 
 end
 
-function run_independent_tree_simulation(argument_dictionary)
-
-
+function generate_independent_trees(argument_dictionary)
     simulated_negative_trees = []
     simulated_positive_trees = []
 
@@ -109,38 +107,92 @@ function run_independent_tree_simulation(argument_dictionary)
     ntrees = parse(Int64, argument_dictionary["ntrees"])
     ntaxa = parse(Int64, argument_dictionary["ntaxa"])
     nsites = parse(Int64, argument_dictionary["nsites"])
-    nsites_big = parse(Int64, argument_dictionary["nsites_big"])
-    K = parse(Int64, argument_dictionary["K"])
-    iters = parse(Int64, argument_dictionary["iters"])
+    
 
     Threads.@threads for i in 1:ntrees
 
-        local_negative_tree = CodonMolecularEvolution.standard_tree_sim(ntaxa)
+        local_negative_tree = standard_tree_sim(ntaxa)
 
         negative_alphavec, negative_betavec, positive_alphavec, positive_betavec = simulate_single_positive_site(nsites, 0.2, 0.3, 2, positive_sites)
 
+        negative_alphabeta_dataframe = DataFrame(alpha = negative_alphavec, beta = negative_betavec)
+        positive_alphabeta_dataframe = DataFrame(alpha = positive_alphavec, beta = positive_betavec)
+
+        CSV.write(string(i)*"_negative_alphabeta.csv", negative_alphabeta_dataframe)
+        CSV.write(string(i)*"_positive_alphabeta.csv", positive_alphabeta_dataframe)
 
 
-        negative_nucs, negative_seqnams, negative_tre = CodonMolecularEvolution.sim_alphabeta_seqs(negative_alphavec, negative_betavec,
+        negative_nucs, negative_seqnams, negative_tre = sim_alphabeta_seqs(negative_alphavec, negative_betavec,
             local_negative_tree, outpath=string(i) * "_negative_simdata_FUBAR",
             CodonMolecularEvolution.demo_nucmat, CodonMolecularEvolution.demo_f3x4) #Note the nucmat and f3x4, not from real data
 
         push!(simulated_negative_trees, (negative_seqnams, negative_nucs, negative_tre, negative_alphavec, negative_betavec))
 
 
-        local_positive_tree = CodonMolecularEvolution.standard_tree_sim(ntaxa)
+        local_positive_tree = standard_tree_sim(ntaxa)
 
         single_strong_index = rand(1:length(positive_alphavec))
 
         positive_betavec[single_strong_index] = 2 * positive_alphavec[single_strong_index]
 
-        positive_nucs, positive_seqnams, positive_tre = CodonMolecularEvolution.sim_alphabeta_seqs(positive_alphavec, positive_betavec,
+        positive_nucs, positive_seqnams, positive_tre = sim_alphabeta_seqs(positive_alphavec, positive_betavec,
             local_positive_tree, outpath=string(i) * "_positive_simdata_FUBAR",
             CodonMolecularEvolution.demo_nucmat, CodonMolecularEvolution.demo_f3x4) #Note the nucmat and f3x4, not from real data
 
         push!(simulated_positive_trees, (positive_seqnams, positive_nucs, positive_tre, positive_alphavec, positive_betavec))
 
     end
+    return simulated_negative_trees, simulated_positive_trees
+end
+
+function read_independent_trees(argument_dictionary)
+
+    tree_directory = argument_dictionary["tree_directory"]
+
+    tree_files = readdir(tree_directory)
+
+    tree_count = Int64(length(tree_files) / 6)
+
+    simulated_positive_trees = []
+    simulated_negative_trees = []
+
+    for i in 1:tree_count
+
+        positive_seqnams, positive_nucs = read_fasta(tree_directory*"/"*string(i)*"_positive_simdata_FUBAR.fasta")
+        positive_tre = read_newick_tree(tree_directory*"/"*string(i)*"_positive_simdata_FUBAR.tre")
+
+        negative_seqnams, negative_nucs = read_fasta(tree_directory*"/"*string(i)*"_negative_simdata_FUBAR.fasta")
+        negative_tre = read_newick_tree(tree_directory*"/"*string(i)*"_negative_simdata_FUBAR.tre")
+
+        positive_alphabeta_frame = CSV.read(tree_directory*"/"*string(i)*"_positive_alphabeta.csv", DataFrame)
+        negative_alphabeta_frame = CSV.read(tree_directory*"/"*string(i)*"_negative_alphabeta.csv", DataFrame)
+
+        positive_alphavec, positive_betavec = (positive_alphabeta_frame.alpha, positive_alphabeta_frame.beta)
+        negative_alphavec, negative_betavec = (negative_alphabeta_frame.alpha, negative_alphabeta_frame.beta)
+
+        push!(simulated_positive_trees, (positive_seqnams, positive_nucs, positive_tre, positive_alphavec, positive_betavec))
+        push!(simulated_negative_trees, (negative_seqnams, negative_nucs, negative_tre, negative_alphavec, negative_betavec))
+
+    end
+    
+    return simulated_negative_trees, simulated_positive_trees
+
+
+end
+
+function run_independent_tree_simulation(argument_dictionary)
+
+    simulated_negative_trees = []
+    simulated_positive_trees = []
+
+    if argument_dictionary["tree_directory"] == ""
+        simulated_negative_trees, simulated_positive_trees = generate_independent_trees(argument_dictionary)
+    else 
+        simulated_negative_trees, simulated_positive_trees = read_independent_trees(argument_dictionary)
+    end
+    ntrees = length(simulated_negative_trees)
+    K = parse(Int64, argument_dictionary["K"])
+    iters = parse(Int64, argument_dictionary["iters"])
 
     targets = zeros(2 * ntrees)
     scores = zeros(2 * ntrees)
@@ -163,13 +215,13 @@ function run_independent_tree_simulation(argument_dictionary)
 
         dispatch = CodonMolecularEvolution.FUBARweightedpos()
 
-        smooth_negative_result_df, smooth_negative_tuple = CodonMolecularEvolution.smoothFUBAR(dispatch, f_grid_negative, string(i) * "_negative_smooth"; K=K, HMC_samples=iters, plots=false)
-        smooth_positive_result_df, smooth_positive_tuple = CodonMolecularEvolution.smoothFUBAR(dispatch, f_grid_positive, string(i) * "_positive_smooth"; K=K, HMC_samples=iters, plots=false)
+        smooth_negative_result_df, smooth_negative_tuple = smoothFUBAR(dispatch, f_grid_negative, string(i) * "_negative_smooth"; K=K, HMC_samples=iters, plots=false)
+        smooth_positive_result_df, smooth_positive_tuple = smoothFUBAR(dispatch, f_grid_positive, string(i) * "_positive_smooth"; K=K, HMC_samples=iters, plots=false)
 
 
 
-        dirichlet_negative_result_df, dirichlet_negative_θ = CodonMolecularEvolution.FUBAR(f_grid_negative, string(i) * "_negative_dirichlet", plots=false)
-        dirichlet_positive_result_df, dirichlet_positive_θ = CodonMolecularEvolution.FUBAR(f_grid_positive, string(i) * "_positive_dirichlet", plots=false)
+        dirichlet_negative_result_df, dirichlet_negative_θ = FUBAR(f_grid_negative, string(i) * "_negative_dirichlet", plots=false)
+        dirichlet_positive_result_df, dirichlet_positive_θ = FUBAR(f_grid_positive, string(i) * "_positive_dirichlet", plots=false)
 
 
 
@@ -265,8 +317,7 @@ function run_independent_tree_simulation(argument_dictionary)
 
 end
 
-function run_dependent_tree_simulation(argument_dictionary)
-
+function generate_dependent_trees(argument_dictionary)
     simulated_small_trees = []
     simulated_big_trees = []
 
@@ -279,32 +330,90 @@ function run_dependent_tree_simulation(argument_dictionary)
     K = parse(Int64, argument_dictionary["K"])
     iters = parse(Int64, argument_dictionary["iters"])
 
-
-
-
     Threads.@threads for i in 1:ntrees
 
-        small_tree = CodonMolecularEvolution.standard_tree_sim(ntaxa)
-        big_tree = CodonMolecularEvolution.standard_tree_sim(ntaxa)
+        small_tree = standard_tree_sim(ntaxa)
+        big_tree = standard_tree_sim(ntaxa)
 
         small_alphavec, small_betavec, big_alphavec, big_betavec = simulate_dependent_trees(nsites, nsites_big, 0.2,0.3,1,positive_sites)
 
-
-
-        small_nucs, small_seqnams, small_tre = CodonMolecularEvolution.sim_alphabeta_seqs(small_alphavec, small_betavec,
+        small_nucs, small_seqnams, small_tre = sim_alphabeta_seqs(small_alphavec, small_betavec,
             small_tree, outpath=string(i) * "_small_simdata_FUBAR",
             CodonMolecularEvolution.demo_nucmat, CodonMolecularEvolution.demo_f3x4) #Note the nucmat and f3x4, not from real data
 
         push!(simulated_small_trees, (small_seqnams, small_nucs, small_tre, small_alphavec, small_betavec))
 
 
-        big_nucs, big_seqnams, big_tre = CodonMolecularEvolution.sim_alphabeta_seqs(big_alphavec, big_betavec,
+        big_nucs, big_seqnams, big_tre = sim_alphabeta_seqs(big_alphavec, big_betavec,
             big_tree, outpath=string(i) * "_big_simdata_FUBAR",
             CodonMolecularEvolution.demo_nucmat, CodonMolecularEvolution.demo_f3x4) #Note the nucmat and f3x4, not from real data
 
         push!(simulated_big_trees, (big_seqnams, big_nucs, big_tre, big_alphavec, big_betavec))
 
+        small_alphabeta_dataframe = DataFrame(alpha = small_alphavec, beta = small_betavec)
+        small_alphabeta_dataframe = DataFrame(alpha = big_alphavec, beta = big_betavec)
+
+        CSV.write(string(i)*"_small_alphabeta.csv", small_alphabeta_dataframe)
+        CSV.write(string(i)*"_big_alphabeta.csv", small_alphabeta_dataframe)
+
+
+
     end
+
+    return simulated_small_trees, simulated_big_trees
+
+end
+
+function read_dependent_trees(argument_dictionary)
+
+    simulated_small_trees = []
+    simulated_big_trees = []
+
+    tree_directory = argument_dictionary["tree_directory"]
+
+    tree_files = readdir(tree_directory)
+
+    tree_count = Int64(length(tree_files) / 6)
+
+    for i in 1:tree_count
+
+        big_seqnams, big_nucs = read_fasta(tree_directory*"/"*string(i)*"_big_simdata_FUBAR.fasta")
+        big_tre = read_newick_tree(tree_directory*"/"*string(i)*"_big_simdata_FUBAR.tre")
+
+        small_seqnams, small_nucs = read_fasta(tree_directory*"/"*string(i)*"_small_simdata_FUBAR.fasta")
+        small_tre = read_newick_tree(tree_directory*"/"*string(i)*"_small_simdata_FUBAR.tre")
+
+        big_alphabeta_frame = CSV.read(tree_directory*"/"*string(i)*"_big_alphabeta.csv", DataFrame)
+        small_alphabeta_frame = CSV.read(tree_directory*"/"*string(i)*"_small_alphabeta.csv", DataFrame)
+
+        big_alphavec, big_betavec = (big_alphabeta_frame.alpha, big_alphabeta_frame.beta)
+        small_alphavec, small_betavec = (small_alphabeta_frame.alpha, small_alphabeta_frame.beta)
+
+        push!(simulated_big_trees, (big_seqnams, big_nucs, big_tre, big_alphavec, big_betavec))
+        push!(simulated_small_trees, (small_seqnams, small_nucs, small_tre, small_alphavec, small_betavec))
+
+    end
+
+    return simulated_small_trees, simulated_big_trees
+
+
+end
+
+function run_dependent_tree_simulation(argument_dictionary)
+
+    nsites = parse(Int64, argument_dictionary["nsites"])
+    nsites_big = parse(Int64, argument_dictionary["nsites_big"])
+    K = parse(Int64, argument_dictionary["K"])
+    iters = parse(Int64, argument_dictionary["iters"])
+
+    simulated_small_trees = []
+    simulated_big_trees = []
+    if argument_dictionary["tree_directory"] == ""
+        simulated_small_trees, simulated_big_trees = generate_dependent_trees(argument_dictionary)
+    else
+        simulated_small_trees, simulated_big_trees = read_dependent_trees(argument_dictionary)
+    end
+   
 
     small_alignment_wide = []
     big_alignment_wide = []
@@ -318,19 +427,19 @@ function run_dependent_tree_simulation(argument_dictionary)
 
         # Perform the init_2_grid calculation only once 
 
-        f_grid_small = CodonMolecularEvolution.alphabetagrid(small_seqnams, small_nucs, newick(small_tre))
-        f_grid_big = CodonMolecularEvolution.alphabetagrid(big_seqnams, big_nucs, newick(big_tre))
+        f_grid_small = alphabetagrid(small_seqnams, small_nucs, newick(small_tre))
+        f_grid_big = alphabetagrid(big_seqnams, big_nucs, newick(big_tre))
 
 
         dispatch = CodonMolecularEvolution.FUBARweightedpos()
 
-        smooth_small_result_df, smooth_small_tuple = CodonMolecularEvolution.smoothFUBAR(dispatch, f_grid_small, string(i) * "_small_smooth"; K=K, HMC_samples=iters, plots=false)
-        smooth_big_result_df, smooth_big_tuple = CodonMolecularEvolution.smoothFUBAR(dispatch, f_grid_big, string(i) * "_big_smooth"; K=K, HMC_samples=iters, plots=false)
+        smooth_small_result_df, smooth_small_tuple = smoothFUBAR(dispatch, f_grid_small, string(i) * "_small_smooth"; K=K, HMC_samples=iters, plots=false)
+        smooth_big_result_df, smooth_big_tuple = smoothFUBAR(dispatch, f_grid_big, string(i) * "_big_smooth"; K=K, HMC_samples=iters, plots=false)
 
 
 
-        dirichlet_small_result_df, dirichlet_small_θ = CodonMolecularEvolution.FUBAR(f_grid_small, string(i) * "_small_dirichlet", plots=false)
-        dirichlet_big_result_df, dirichlet_big_θ = CodonMolecularEvolution.FUBAR(f_grid_big, string(i) * "_big_dirichlet", plots=false)
+        dirichlet_small_result_df, dirichlet_small_θ = FUBAR(f_grid_small, string(i) * "_small_dirichlet", plots=false)
+        dirichlet_big_result_df, dirichlet_big_θ = FUBAR(f_grid_big, string(i) * "_big_dirichlet", plots=false)
 
 
         push!(small_alignment_wide, smooth_small_tuple.global_posterior_probability)
@@ -358,9 +467,6 @@ function run_dependent_tree_simulation(argument_dictionary)
 
 end
 
-if parse(Bool, argument_dictionary["only_simulate"])
-    exit()
-end
 
 
 function calculate_p(samples, K)
@@ -391,10 +497,16 @@ function calculate_mixiness(samples, K)
 
 end
 
+if parse(Bool, argument_dictionary["only_simulate"])
+    if argument_dictionary["simulation_type"] == "independent"
+        generate_independent_trees(argument_dictionary)
+    else
+        generate_dependent_trees(argument_dictionary)
+    end
+    exit()
+end
 if argument_dictionary["simulation_type"] == "independent"
     run_independent_tree_simulation(argument_dictionary)
 elseif argument_dictionary["simulation_type"] == "dependent"
     run_dependent_tree_simulation(argument_dictionary)
-
 end
-
