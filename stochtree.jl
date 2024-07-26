@@ -1,4 +1,4 @@
-using CodonMolecularEvolution, MolecularEvolution, FASTX, Distributions, EvalMetrics, Plots, DataFrames, CSV
+using CodonMolecularEvolution, MolecularEvolution, FASTX, Distributions, EvalMetrics, Plots, DataFrames, CSV, Dates
 
 
 
@@ -13,7 +13,8 @@ argument_dictionary = Dict(
     "iters" => "1000",
     "tree_directory" => "",
     "only_simulate" => "false",
-    "simulation_type" => "independent")
+    "simulation_type" => "independent",
+    "benchmark_count" => "10")
 
 if length(ARGS) == 0
 
@@ -30,6 +31,8 @@ if length(ARGS) == 0
     end
 
 end
+
+
 
 for argument in ARGS
     key, value = (split(argument, "=")[1], split(argument, "=")[2])
@@ -467,35 +470,57 @@ function run_dependent_tree_simulation(argument_dictionary)
 
 end
 
+function benchmark_methods(argument_dictionary)
+    positive_sites = parse(Int64, argument_dictionary["positive_sites"])
+    ntaxa = parse(Int64, argument_dictionary["ntaxa"])
+    K = parse(Int64, argument_dictionary["K"])
+    iters = parse(Int64, argument_dictionary["iters"])
 
 
-function calculate_p(samples, K)
+    dirichlet_times = []
+    smooth_times = []
 
-    ψ_samples = [samples[i].z.θ[K+1] for i in 1:length(samples)]
+    for i in 1:2
 
-    ψ_positive_given_data = sum(ψ_samples .> 0) / length(ψ_samples)
+        negative_alphavec, negative_betavec, alphavec, betavec = simulate_single_positive_site(100 + 10*i, 0.2, 0.3, 2, positive_sites)
 
-    return ψ_positive_given_data
+        local_positive_tree = standard_tree_sim(ntaxa)
 
-end
+        nucs, seqnams, tre = sim_alphabeta_seqs(alphavec, betavec,
+            local_positive_tree, outpath=string(i) * "benchmarking_tree",
+            CodonMolecularEvolution.demo_nucmat, CodonMolecularEvolution.demo_f3x4) #Note the nucmat and f3x4, not from real data
 
-function calculate_mixiness(samples, K)
 
-    ψ_samples = [samples[i].z.θ[K+1] for i in 1:length(samples)]
+        # Perform the init_2_grid calculation only once 
 
-    switches = 0
+        f_grid = alphabetagrid(seqnams, nucs, newick(tre))
 
-    for i in 1:(length(ψ_samples)-1)
+        dispatch = CodonMolecularEvolution.FUBARweightedpos()
 
-        if ψ_samples[i] * ψ_samples[i+1] < 0
-            switches = switches + 0.5
-        end
+        smooth_start_time = Dates.now().instant.periods.value
 
+        smooth_result, smooth_tuple = smoothFUBAR(dispatch, f_grid, string(i) * "_smooth"; K=K, HMC_samples=iters, plots=false)
+
+        smooth_end_time = Dates.now().instant.periods.value
+
+        dirichlet_result_df, dirichlet_θ = FUBAR(f_grid, string(i) * "_dirichlet", plots=false)
+
+        dirichlet_end_time = Dates.now().instant.periods.value
+
+        push!(dirichlet_times, (dirichlet_end_time - smooth_end_time))
+        push!(smooth_times, ((smooth_end_time - smooth_start_time)))
+
+        write(string(i) * "_mixiness.txt", string(smooth_tuple.mixing))
     end
 
-    return switches / length(ψ_samples)
+
+
+    CSV.write("timing.csv",DataFrame(smooth_times = smooth_times, dirichlet_times = dirichlet_times))
+
 
 end
+
+
 
 if parse(Bool, argument_dictionary["only_simulate"])
     if argument_dictionary["simulation_type"] == "independent"
@@ -509,4 +534,6 @@ if argument_dictionary["simulation_type"] == "independent"
     run_independent_tree_simulation(argument_dictionary)
 elseif argument_dictionary["simulation_type"] == "dependent"
     run_dependent_tree_simulation(argument_dictionary)
+elseif argument_dictionary["simulation_type"] == "time_benchmark"
+    benchmark_methods(argument_dictionary)
 end

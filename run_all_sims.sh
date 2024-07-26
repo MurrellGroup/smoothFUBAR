@@ -33,3 +33,5 @@ mv *.tre trees
 cp -r trees dependent_simulation
 
 julia --threads $threads stochtree.jl tree_directory=trees directory=dependent_simulation iters=1000 simulation_type=dependent
+
+julia stochtree.jl simulation_type=time_benchmark
